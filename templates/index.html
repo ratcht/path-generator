@@ -1,0 +1,352 @@
+<!DOCTYPE HTML>
+
+<head>
+	<link rel="stylesheet" href="{{ url_for('static',filename='css/index.css') }}">
+	<link rel="stylesheet" href="{{ url_for('static',filename='js/script.js') }}">
+	<script type="text/javascript" src="http://code.jquery.com/jquery.min.js">  </script>
+
+
+</head>
+
+<html>
+
+
+		
+	<canvas id="canvas" width="500" height="500"></canvas>
+
+		
+	<p id="xy">x: , y:</p>
+	<p id="canvWidth">x: , y:</p>
+	<p id="isOrigin">Select Origin: 0</p>
+	<button type="button" id="selectOrigin">Select Origin</button>
+	<button type="button" id="modifyPoints">Modify Points</button>
+	<button type="button" id="smoothPath">Generate Smooth Path!</button>
+	<button type="button" id="reset">Reset Points</button>
+
+</html>
+
+<script>
+	$(function() {
+		//button variables
+		var isSelectOrigin = false;
+		var isModifyPoints = true;
+
+
+		// canvas related variables
+		// references to canvas and its context and its position on the page
+		var canvas = document.getElementById("canvas");
+		var ctx = canvas.getContext("2d");
+		var $canvas = $("#canvas");
+		var canvasOffset = $canvas.offset();
+		var offsetX = canvasOffset.left;
+		var offsetY = canvasOffset.top;
+		var scrollX = $canvas.scrollLeft();
+		var scrollY = $canvas.scrollTop();
+		ctx.canvas.width  = window.innerWidth*0.40;
+		ctx.canvas.height = window.innerWidth*0.40;
+		var cw = canvas.width;
+		var ch = canvas.height;
+
+		// flag to indicate a drag is in process
+		// and the last XY position that has already been processed
+		var isDown = false;
+		var lastX;
+		var lastY;
+
+		// the radian value of a full circle is used often, cache it
+		var PI2 = Math.PI * 2;
+
+		// variables relating to existing circles
+		var circles = [];
+		var stdRadius = cw*0.01;
+		var draggingCircle = -1;
+
+		var imageOffset = (15/768)*cw;
+
+		var fieldConversion = 144/(cw-(2*imageOffset));
+
+
+		var origin = {x:imageOffset, y:imageOffset+738, radius:stdRadius, color:"#0eb353"};
+
+
+
+		$("#canvWidth").text("wid: "+cw+" heigh: "+ ch);
+
+		function drawImageScaled(img, ctx) {
+				var canvas = ctx.canvas ;
+				var hRatio = canvas.width  / img.width    ;
+				var vRatio =  canvas.height / img.height  ;
+				var ratio  = Math.min ( hRatio, vRatio );
+				var centerShift_x = ( canvas.width - img.width*ratio ) / 2;
+				var centerShift_y = ( canvas.height - img.height*ratio ) / 2;  
+				ctx.clearRect(0,0,canvas.width, canvas.height);
+				ctx.drawImage(img, 0,0, img.width, img.height,
+													centerShift_x,centerShift_y,img.width*ratio, img.height*ratio);  
+		}
+
+		function drawDashedLine(x1, y1, x2, y2, ctx){
+			ctx.setLineDash([5, 3]);/*dashes are 5px and spaces are 3px*/
+			ctx.beginPath();
+			ctx.moveTo(x1,y1);
+			ctx.lineTo(x2, y2);
+			ctx.stroke();
+		}
+
+		function drawOrigin(ctx){
+			//draw origin
+			ctx.beginPath();
+			ctx.arc(origin.x, origin.y, origin.radius, 0, PI2);
+			ctx.closePath();
+			ctx.fillStyle = origin.color;
+			ctx.fill();
+
+			ctx.beginPath();
+			ctx.arc(origin.x, origin.y, origin.radius*1.020, 0, 2 * Math.PI);
+			ctx.strokeStyle = "#05fa6b";
+			ctx.setLineDash([]);
+			ctx.lineWidth = origin.radius*0.20;
+
+			ctx.stroke();	
+		}
+
+		let newImage = new Image();
+			newImage.src = "{{url_for('static', filename='field.png')}}"
+
+			// When it loads
+			newImage.onload = () => {
+					// Draw the image onto the context
+					drawImageScaled(newImage, ctx);
+					//draw origin
+					drawOrigin(ctx);
+			}
+			
+		var lastHit = -1;
+		// clear the canvas and redraw all existing circles
+		function drawAll() {
+				ctx.clearRect(0, 0, cw, ch);
+				drawImageScaled(newImage, ctx);
+				for(var i=0; i<circles.length; i++){
+						var circle = circles[i];
+						ctx.beginPath();
+						ctx.arc(circle.x, circle.y, circle.radius, 0, PI2);
+						ctx.closePath();
+						ctx.fillStyle = circle.color;
+						ctx.fill();
+
+						ctx.beginPath();
+						ctx.arc(circle.x, circle.y, circle.radius*1.020, 0, 2 * Math.PI);
+						ctx.strokeStyle = "#fccbb6";
+						ctx.setLineDash([]);
+						ctx.lineWidth = circle.radius*0.20;
+
+						ctx.stroke();
+						
+						if (i != 0){
+							drawDashedLine(circles[i-1].x, circles[i-1].y, circle.x, circle.y, ctx);
+						}
+						drawOrigin(ctx);
+
+						
+				}
+				if(circles.length != 0){
+					$("#xy").text("x: "+( Math.round((circles[lastHit].x-origin.x) * fieldConversion * 100) / 100)+" y: "+ ( Math.round((origin.y-circles[lastHit].y) * fieldConversion * 100) / 100));
+				}
+				
+				drawOrigin(ctx);
+
+
+		}
+
+		
+		
+		function modifyPoints(e){
+			// save the mouse position
+				// in case this becomes a drag operation
+				lastX = parseInt(e.clientX - offsetX);
+				lastY = parseInt(e.clientY - offsetY);
+
+				// hit test all existing circles
+				var hit = -1;
+				for (var i=0; i < circles.length; i++) {
+						var circle = circles[i];
+						var dx = lastX - circle.x;
+						var dy = lastY - circle.y;
+						if (dx*dx + dy*dy < circle.radius * circle.radius) {
+								hit = i;
+								lastHit = i;
+						}
+				}
+
+				// if no hits then add a circle
+				// if hit then set the isDown flag to start a drag
+
+				if (e.which == 1){
+					if (hit < 0) {
+						circles.push({x:lastX, y:lastY, radius:stdRadius, color:"#f55e1d"});
+						drawAll();
+					} else {
+							draggingCircle = circles[hit];
+							circles[hit].color = "#e82b09"
+							lastHit = hit;
+							drawAll();
+							isDown = true;
+					}
+				} else if (e.which == 3){
+					if (hit >=0){
+						circles.splice(hit, 1);
+						drawAll();
+					}
+				}
+		}
+		
+		function selectOrigin(e){
+			// save the mouse position
+				// in case this becomes a drag operation
+				lastX = parseInt(e.clientX - offsetX);
+				lastY = parseInt(e.clientY - offsetY);
+
+				origin = {x:lastX, y:lastY, radius:stdRadius, color:"#0eb353"};
+				drawAll();
+
+		}
+
+		function handleMouseDown(e) {
+				// tell the browser we'll handle this event
+				e.preventDefault();
+				e.stopPropagation();
+
+				if(isModifyPoints){
+					modifyPoints(e);
+				} else if(isSelectOrigin){
+					selectOrigin(e);
+				}
+				
+				
+				
+				
+
+		}
+
+		function handleMouseUp(e) {
+				// tell the browser we'll handle this event
+				e.preventDefault();
+				e.stopPropagation();
+
+				if(!isModifyPoints){
+					drawAll();
+
+					return;
+				}
+
+				// stop the drag
+				circles[lastHit].color = "#f55e1d"
+				drawAll();
+				isDown = false;
+		}
+
+		function handleMouseMove(e) {
+
+				// if we're not dragging, just exit
+				if (!isDown) { return; }
+
+
+				// tell the browser we'll handle this event
+				e.preventDefault();
+				e.stopPropagation();
+
+				// get the current mouse position
+				mouseX = parseInt(e.clientX - offsetX);
+				mouseY = parseInt(e.clientY - offsetY);
+
+				// calculate how far the mouse has moved
+				// since the last mousemove event was processed
+				var dx = mouseX - lastX;
+				var dy = mouseY - lastY;
+
+				// reset the lastX/Y to the current mouse position
+				lastX = mouseX;
+				lastY = mouseY;
+
+				// change the target circles position by the 
+				// distance the mouse has moved since the last
+				// mousemove event
+				draggingCircle.x += dx;
+				draggingCircle.y += dy;
+
+				// redraw all the circles
+				drawAll();
+		}
+		// Create our image
+
+		
+		// listen for mouse events
+		$("#canvas").mousedown(function(e) { handleMouseDown(e); });
+		$("#canvas").mousemove(function(e) { handleMouseMove(e); });
+		$("#canvas").mouseup(function(e) { handleMouseUp(e); });
+		$("#canvas").mouseout(function(e) { handleMouseUp(e); });
+		$( "#selectOrigin" ).click(function() {
+			isSelectOrigin = true;
+			isModifyPoints = false;
+			$("#isOrigin").text("Select Origin: 1");
+		});
+		$( "#modifyPoints" ).click(function() {
+			isSelectOrigin = false;
+			isModifyPoints = true;
+			$("#isOrigin").text("Select Origin: 0");
+		});
+
+		function getVals(){
+			var returnVals = [];
+			for(var i=0; i<circles.length; i++){
+				
+				returnVals.push(Math.round((circles[i].x-origin.x) * fieldConversion * 100) / 100);
+				returnVals.push(Math.round((origin.y-circles[i].y) * fieldConversion * 100) / 100);
+
+			}
+
+			return returnVals;
+		}
+
+
+
+		function myFunc(vars) {
+    return vars
+		}
+
+		$("#smoothPath").on("click",function(){
+			array = getVals();
+			$.ajax({
+					type: "POST",
+					url: "/submit",
+					contentType: "application/json",
+					dataType: "JSON",
+					data: JSON.stringify(array),
+					success: function(data, textStatus) {
+						console.log(data);
+						circles = [];
+						for(let i = 0; i < data.length; i+=2) {
+							let X = data[i];
+							let Y = data[i+1];
+							circles.push({x:(X/fieldConversion)+origin.x, y:origin.y-(Y/fieldConversion), radius:stdRadius, color:"#f55e1d"});
+						}
+						drawAll();
+					}
+				});
+		});
+
+
+		$( "#reset" ).click(function() {
+			circles = [];
+			drawAll();
+			window.location.href = '/reset';
+
+		});
+
+
+
+
+
+	}); // end $(function(){});
+	document.getElementById("canvas").addEventListener('contextmenu', event => event.preventDefault());
+
+</script>
